@@ -77,7 +77,8 @@ function SetParametersHash{
 function ParseTemplate{
     param (
         [string]$templatePath,
-        [hashtable]$yamlParams
+        [hashtable]$yamlParams,
+        [string]$yamlLineIndentation
     )
 
     ## Get Yaml
@@ -106,14 +107,14 @@ function ParseTemplate{
            $yamlParams = SetParametersHash -parametersHash $yamlParams -parametersYaml $yamlLine
         }
         ## Remove Template Array Prefix
-        elseif ($startPrefixRemoved -eq $false -and ($yamlLine -like "*stages:*" -or $yamlLine -like "*jobs:*")) {
+        elseif ($startPrefixRemoved -eq $false -and ($yamlLine -like "*steps:*" -or $yamlLine -like "*stages:*" -or $yamlLine -like "*jobs:*")) {
             $startPrefixRemoved = $true
         }
         ## Update the Yaml Template
         else {
             $yamlLine = ReplacePlaceholder -placeholderType "parameters" -str $yamlLine -placeholderHash $yamlParams
 
-            $rebuiltTemplateYaml += (&{If($yamlLine.count -gt 1) {$yamlLine.Substring(1)} Else {$yamlLine}}) + "`n"
+            $rebuiltTemplateYaml += $yamlLineIndentation + (&{If($yamlLine.count -gt 1) {$yamlLine.Substring(1)} Else {$yamlLine}}) + "`n"
         }
     }
 
@@ -126,28 +127,41 @@ function processMainPipeline{
         $rootPath
         )
 
-    $pipelineYaml = Get-Content -Path ($rootPath + $pipelineYamlName) 
+    #$pipelineYaml = Get-Content -Path ($rootPath + $pipelineYamlName) 
+    $pipelineYamlPath = Join-Path -Path $rootPath -ChildPath $pipelineYamlName
+    $pipelineYaml = Get-Content -Path $pipelineYamlPath
 
     $processingTemplate = $false
     $rebuiltPipelineYaml = ""
     $templateParameters = @{}
     $templatePath = ""
+    $templateIndentation = ""
     foreach ($yamlLine in $pipelineYaml){
 
         if ($processingTemplate -eq $true -and ($yamlLine -replace "\s","" -replace "`t","") -eq "") {   
 
-            $templateYaml = ParseTemplate -templatePath ($rootPath + $templatePath) -yamlParams $templateParameters
+            $templateYamlPath = Join-Path -Path $rootPath -ChildPath $templatePath
+            $templateYaml = ParseTemplate -templatePath $templateYamlPath -yamlParams $templateParameters -yamlLineIndentation $templateIndentation
 
-            $rebuiltPipelineYaml += "`n" + $templateYaml + "`n"
+            $rebuiltPipelineYaml += $templateIndentation + $templateYaml.trim() + "`n"
 
             $processingTemplate = $false
             $templateParameters = @{}
         }
 
         ## Start processing Template
-        if ($yamlLine -like "*- template*" -and $yamlLine -notLike "*#*" -and $yamlLine -notLike "*yml@*"){
+        if ($yamlLine -like "*- template*" -and $yamlLine -notmatch "^\s*#" -and $yamlLine -notLike "*yml@*"){
 
-            $templatePath = (GetPropertyValue -yamlLine $yamlLine).trim()
+            Write-Verbose "Found template reference: $yamlLine"
+
+            # Get current indentation
+            $templateIndentation = CreateIndentation -indentationCount ($yamlLine.IndexOf("-"))
+            Write-Verbose "Current Indentation: [$templateIndentation]"
+
+            # Replace inline comments
+            $cleanyamlLine = $yamlLine -replace "#.*$", ""
+            Write-Verbose "Cleaned template file path: $cleanyamlLine"
+            $templatePath = (GetPropertyValue -yamlLine $cleanyamlLine).trim()
             $processingTemplate = $true
 
         } 
@@ -170,7 +184,8 @@ function processMainPipeline{
     }
     
     ## Create new full YAML
-    $outputPath = "$rootPath\full-$pipelineYamlName"
+    $fullPipelineYamlName = "full-" + (Split-Path -Path $pipelineYamlName -Leaf)
+    $outputPath = Join-Path $rootPath -ChildPath $fullPipelineYamlName
     Write-Host "Output to $outputPath"
     Set-Content -Path $outputPath -Value $rebuiltPipelineYaml
 
