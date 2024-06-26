@@ -1,22 +1,48 @@
 # Process script parameters
 # Example: ./Az.DevOps.Preview.ps1 -AzureDevOpsPAT "*****" `
 #            -OrganizationName "my_org" -ProjectName "my_proj" -PipelineId "42" `
-#            -PipelineFile "pipeline.yml" -templateParameters @{"foo"="bar"; "baz"="qux"}
+#            -PipelineFile "pipeline.yml" -templateParameters @{"foo"="bar"; "baz"="qux"} `
+#            -MergePipelineTemplates -SaveMergedPipeline
 param(
     [string]$AzureDevOpsPAT,
     [string]$OrganizationName,
     [string]$ProjectName,
     [string]$PipelineId,
     [string]$PipelineFile,
-    [hashtable]$TemplateParameters
+    [hashtable]$TemplateParameters = @{},
+    [switch]$MergePipelineYaml,
+    [switch]$SaveMergedPipeline
     #    [string]$RepoBranch
 )
+
+# Attempt to merge pipeline Yaml
+if ($MergePipelineYaml.IsPresent) {
+    Import-Module ( Join-Path -Path $PSScriptRoot -ChildPath "Az.DevOps.YamlParse.ps1" ) -Force
+
+    if ($SaveMergedPipeline.IsPresent) {
+        $outputPath = processMainPipeline -pipelineYaml $PipelineFile -rootPath (Split-Path -Parent $PipelineFile) -saveMergedPipeline
+
+        # Change the pipeline file to preview to the freshly merged Yaml
+        $PipelineFile = $outputPath
+
+        # Read in the YAML file
+        $PipelineYaml = Get-Content -Path $PipelineFile -Raw
+    }
+    else {
+        $PipelineYaml = processMainPipeline -pipelineYaml $PipelineFile -rootPath (Split-Path -Parent $PipelineFile)
+    }
+
+}
+else {
+    # Read in the YAML file
+    $PipelineYaml = Get-Content -Path $PipelineFile -Raw
+}
 
 # Function to format the error message from the pipeline preview
 # Color highlights the error message, and prints the context of the error in the YAML file
 function Format-Preview-Error {
     param (
-        [string]$PipelineFile,
+        [string]$PipelineYaml,
         [string]$ErrorMessage
     )
 
@@ -40,27 +66,34 @@ function Format-Preview-Error {
             $esc = [char]27
             Write-Host "`n$esc[4mContext:$esc[0m" -ForegroundColor White
 
-            # Print context
-            if ($line -gt 5) {
+            $PipelineYamlArray = $PipelineYaml -split "\r?\n|\r"
+            $contextBuffer = 5
+            if ($line -gt $contextBuffer) {
                 $startLine = $line - 5
             }
             else {
                 $startLine = 0
             }
-            $endLine = $line + 5
-            foreach ($fileLine in (Get-Content -Path $PipelineFile)[($startLine)..($endLine)]) {
-                if ($fileLine.ReadCount -eq $line) {
+            if ($line + $contextBuffer -gt $PipelineYamlArray.Length) {
+                $endLine = $PipelineYamlArray.Length
+            }
+            else {
+                $endLine = $line + $contextBuffer
+            }
+
+            # Print context
+            for ($i = $startLine; $i -le $endLine; $i++) {
+                if ($i -eq ($line - 1)) {
                     # Highlight line
-                    Write-Host ("{0,10} {1}" -f ("=> " + $fileLine.ReadCount), $fileLine) -ForegroundColor Blue
+                    Write-Host ("{0,10} {1}" -f ("=> " + ($i + 1)), $PipelineYamlArray[$i]) -ForegroundColor Blue
                     # Highlight column
                     Write-Host (" " * ($column + 10) + "^") -ForegroundColor Green
                 }
                 else { 
-                    Write-Host ("{0,10} {1}" -f $fileLine.ReadCount, $fileLine)
+                    Write-Host ("{0,10} {1}" -f ($i + 1), $PipelineYamlArray[$i])
                 }
             }
         }
- 
         else {
             Write-Host "The error message does not match the expected format."
             Write-Host $errorLine
@@ -75,9 +108,6 @@ $AzureDevOpsAuthenicationHeader = @{Authorization = 'Basic ' + [Convert]::ToBase
 $APIVersion = "7.2-preview.1"
 $URI = "https://dev.azure.com/$($OrganizationName)/" 
 $URI = $URI + "$($ProjectName)/_apis/pipelines/$($PipelineId)/preview?api-version=$($APIVersion)"
-
-# Read in the YAML file
-$pipelineYaml = Get-Content -Path $PipelineFile -Raw
 
 # Example of a complete pipeline preview body
 #$pipelinePreviewBody = @{
@@ -100,7 +130,7 @@ $pipelineYaml = Get-Content -Path $PipelineFile -Raw
 $pipelinePreviewBody = @{
     "templateParameters" = $TemplateParameters
     "previewRun"         = $true
-    "yamlOverride"       = $pipelineYaml
+    "yamlOverride"       = $PipelineYaml
 }  | ConvertTo-Json -Depth 5
 
 try {
@@ -110,18 +140,21 @@ catch {
     # Check to see if the rest API call returned an error
     if ($_.ErrorDetails.Message) {
         $errorMessage = ($_.ErrorDetails.Message | ConvertFrom-Json).message
-        Format-Preview-Error -PipelineFile $PipelineFile -ErrorMessage $errorMessage
+
+        Format-Preview-Error -PipelineYaml $PipelineYaml -ErrorMessage $errorMessage
+        #Format-Preview-Error -PipelineFile $PipelineFile -ErrorMessage $errorMessage
 
         # Print type and key of the error from the API
         $formattedError = $_.ErrorDetails.Message | ConvertFrom-Json
         Write-Error ("`n" + $formattedError.typeName + "`n" + $formattedError.typeKey) -ErrorAction Stop
 
-    } else {
+    }
+    else {
         # We encountered an exception with the original Rest API call
         # rethrow the exception
         throw
     }
 }
 
-Write-Host "Pipeline Preview Successful:"
-Write-Host $response
+Write-Host "Pipeline Preview Successful" -ForegroundColor Green
+#Write-Host $response

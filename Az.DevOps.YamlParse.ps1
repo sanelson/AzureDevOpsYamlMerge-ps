@@ -123,8 +123,9 @@ function ParseTemplate{
 
 function processMainPipeline{
     param(
-        $pipelineYamlName,
-        $rootPath
+        [string]$pipelineYamlName,
+        [string]$rootPath,
+        [switch]$saveMergedPipeline
         )
 
     #$pipelineYaml = Get-Content -Path ($rootPath + $pipelineYamlName) 
@@ -183,11 +184,14 @@ function processMainPipeline{
     
     }
     
-    ## Create new full YAML
-    $fullPipelineYamlName = "full-" + (Split-Path -Path $pipelineYamlName -Leaf)
-    $outputPath = Join-Path $rootPath -ChildPath $fullPipelineYamlName
-    Write-Host "Output to $outputPath"
-    Set-Content -Path $outputPath -Value $rebuiltPipelineYaml
-
-    return $outputPath
+    if ($saveMergedPipeline.IsPresent) {
+        ## Create new full YAML
+        $fullPipelineYamlName = "full-" + (Split-Path -Path $pipelineYamlName -Leaf)
+        $outputPath = Join-Path $rootPath -ChildPath $fullPipelineYamlName
+        # Write-Host "Output to $outputPath"
+        Set-Content -Path $outputPath -Value $rebuiltPipelineYaml
+        return $outputPath
+    } else {
+        return $rebuiltPipelineYaml
+    }
 }
