@@ -1,55 +1,72 @@
-# Azure DevOps Yaml Merge Tool
+# Azure DevOps Yaml Validation and Merge Tool
 
 ## Description
 
-Powershell script to merge Azure DevOps pipelines and their templates into a single pipeline YAML. Combined file can be used with the Azure DevOps API Preview endpoint to validate pipeline. See VSTeam Integration below.
+Powershell scripts to merge Azure DevOps pipelines and their templates into a single pipeline YAML. Combined file can be validated with the Azure DevOps API Preview endpoint to validate pipeline. 
 
 ## Installation
 
-Clone this repo or directly download the `Az.DevOps.YamlParse.ps1` script.
+Clone this repo or directly download the `Az.DevOps.YamlParse.ps1` and `Az.DevOps.PipelinePreview.ps1` scripts.
 
 ## Usage
 
 NOTE: These examples are for WSL, but with minor path changes should work in Windows PS.
 
-Source the script
+Prep Steps:
+Determine the account name, project name and pipeline ID from the ADO pipeline url. You must create an initial version of the pipeline in ADO in order to reference its pipeline ID. Ensure the PAT has at least Build Run & Execute permissions.
+
+`https://dev.azure.com/<account_name>/<project_name>/_build?definitionId=<pipeline_id>`
+
+Example Command
 
 ```
-. ./Az.DevOps.YamlParse.ps1
+./my_script_dir/Az.DevOps.PipelinePreview.ps1 -AzureDevOpsPAT "********" `
+ -OrganizationName "<account_name>" `
+ -ProjectName "<project_name>" `
+ -PipelineId "<pipeline_id>" `
+ -PipelineFile ./pipeline.yml `
+ -TemplateParameters @{ "foo" = "bar" } `
+ -MergePipelineYaml `
+ -SaveMergedPipeline
 ```
 
-Assuming a root of the current directory which also contains the main pipeline `pipeline.yml'. Template paths within the pipeline should either be absolute or relative to this rootpath.
+This should create a fully merged pipeline named `full-pipeline.yml` in the same directory as `pipeline.yml`. The script will then attempt to pass the merged Yaml to the Azure DevOps Preview API to validate it.
+
+If it is successful, you should see `Pipeline Preview Successful`. If there is an issue with the pipeline, you will get an error and some context indicating where the error is in your merged Yaml content.
+
+Here's an example of an error
 
 ```
-$outputPath = processMainPipeline -pipelineYaml pipeline.yml -rootPath $PWD.Path
-```
+                                                                                                                        
+/pipelines/pipeline.yml (Line: 26, Column: 10): Unexpected value ''
 
-This should create a fully merged pipeline named `full-pipeline.yml` in the rootpath.
+Context:
+        24     displayName: "My display name"
+        25 
+     => 26     jobs:
+                    ^
+        27     jobs:
+        28     - job: My_Job_Name
+        29       displayName: 'My Job Name'
+        30       steps:
+        31         # dependency-install-steps.yml
+        32         - script: |
 
-## VSTeam Integration
+/pipelines/snowflake-customer-deployment.yml (Line: 27, Column: 5): 'jobs' is already defined
 
-link: https://github.com/MethodsAndPractices/vsteam
+Context:
+        24     displayName: "My display name"
+        25 
+        26     jobs:
+     => 27     jobs:
+               ^
+        28     - job: My_Job_Name
+        29       displayName: 'My Job Name'
+        30       steps:
+        31         # dependency-install-steps.yml
+        32         - script: |
 
-Determine the account name, project name and pipeline ID from the ADO pipeline url.
-
-https://dev.azure.com/<account_name>/<project_name>/_build?definitionId=<pipeline_id>
-
-Note: You must create an initial version of the pipeline in ADO in order to reference its pipeline ID. Also, note the branch name in which the pipeline was created. 
-
-Install VSTeam Module
-
-```
-Install-Module -Name VSTeam -Repository PSGallery -Scope CurrentUser
-```
-
-Configure account access. Ensure the PAT has at least Build Run & Execute permissions.
-
-```
-Set-VSTeamAccount -Account <account_name> -PersonalAccessToken *****
-```
-
-Now validate the pipeline. In this example we use the `full-pipeline.yml' created by the YAML merge script previously.
-
-```
-Test-VSTeamYamlPipeline -Project <project_name> -PipelineId <pipeline_id> -FilePath full-pipeline.yml -Branch <branch_name>
+Write-Error: 
+Microsoft.Azure.Pipelines.WebApi.PipelineValidationException, Microsoft.Azure.Pipelines.WebApi
+PipelineValidationException
 ```
